@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BDF 解析器</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #fff;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        h1, h2 {
+            color: #333;
+        }
+
+        form {
+            display: flex;
+            flex-direction: column;
+        }
+
+        label {
+            margin-top: 10px;
+            font-weight: bold;
+        }
+
+        input[type="file"],
+        input[type="text"],
+        select,
+        button {
+            margin-top: 5px;
+            padding: 10px;
+            font-size: 16px;
+        }
+
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        pre {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BDF 解析器</h1>
+        <form id="uploadForm">
+            <label for="bdfFile">上传 BDF 文件:</label>
+            <input type="file" id="bdfFile" name="bdfFile" accept=".bdf" required><br><br>
+
+            <label for="charRange">字符范围（例如，0x20-0x7e）:</label>
+            <input type="text" id="charRange" name="charRange" required><br><br>
+
+            <label for="outputFormat">输出格式:</label>
+            <select id="outputFormat" name="outputFormat">
+                <option value="plainText">纯文本</option>
+                <option value="cCode">C 代码</option>
+            </select><br><br>
+
+            <button type="submit">解析</button>
+        </form>
+
+        <h2 id="resultTitle"></h2>
+        <pre id="result"></pre>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            const fileInput = document.getElementById('bdfFile');
+            const charRangeInput = document.getElementById('charRange');
+            const outputFormatSelect = document.getElementById('outputFormat');
+
+            if (!fileInput.files.length || !charRangeInput.value) {
+                alert('请上传一个 BDF 文件并指定一个字符范围。');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            const charRange = charRangeInput.value;
+            const outputFormat = outputFormatSelect.value;
+
+            reader.onload = function(e) {
+                const bdfContent = e.target.result;
+                const dwidthDict = parseBdf(bdfContent, charRange);
+
+                let result;
+                if (outputFormat === 'cCode') {
+                    result = generateCCode(dwidthDict);
+                } else {
+                    result = Object.entries(dwidthDict)
+                        .sort((a, b) => a[1][0] - b[1][0])
+                        .map(([_, [code, width]]) => `字符: ${String.fromCharCode(code)} (编码: ${code.toString(16).padStart(4, '0')}), 宽度: ${width}`)
+                        .join('\n');
+                }
+
+                document.getElementById('resultTitle').textContent = '结果:';
+                document.getElementById('result').textContent = result;
+            };
+
+            reader.readAsText(file);
+        });
+
+        function parseBdf(content, charRange) {
+            const [startChar, endChar] = charRange.split('-');
+            const startCode = parseInt(startChar, 16);
+            const endCode = parseInt(endChar, 16);
+
+            const lines = content.split('\n');
+            let currentChar = null;
+            const dwidthDict = {};
+
+            lines.forEach(line => {
+                const parts = line.trim().split(/\s+/);
+                if (parts.length === 0) return;
+
+                if (parts[0] === 'STARTCHAR') {
+                    currentChar = parts[1];
+                } else if (parts[0] === 'ENCODING') {
+                    const encoding = parseInt(parts[1], 10);
+                    if (startCode <= encoding && encoding <= endCode) {
+                        dwidthDict[currentChar] = [encoding, null];
+                    }
+                } else if (parts[0] === 'DWIDTH') {
+                    if (currentChar && dwidthDict[currentChar]) {
+                        dwidthDict[currentChar] = [dwidthDict[currentChar][0], parseInt(parts[1], 10)];
+                    }
+                } else if (parts[0] === 'ENDCHAR') {
+                    currentChar = null;
+                }
+            });
+
+            return dwidthDict;
+        }
+
+        function generateCCode(dwidthDict) {
+            let cCode = "void saveCharLength()\n{\n";
+            cCode += "  uint8_t i = 0;\n";
+
+            Object.entries(dwidthDict)
+                .sort((a, b) => a[1][0] - b[1][0])
+                .forEach(([_, [code, width]]) => {
+                    const printableChar = String.fromCharCode(code);
+                    const comment = ` // ${printableChar}`;
+                    cCode += `  ASCII_length[i++] = ${width};${comment}\n`;
+                });
+
+            cCode += "}\n";
+            return cCode;
+        }
+    </script>
+</body>
+</html>
